@@ -8,4 +8,5 @@
 .service-tile .service-copy{display:flex;flex-direction:column;gap:4px;min-width:0}
 .service-tile b{font-size:9px;color:#dde2eb}.service-tile small{font-size:8px;line-height:1.45;color:#8793a9}
 .page-panel .field-row{margin-top:10px}
+.pipeline-trace{border-top:1px solid #2b3549;margin-top:12px;padding-top:10px}.pipeline-trace>b{display:block;font-size:9px;color:#bcb4ff;margin-bottom:8px}.pipeline-trace>div{display:flex;align-items:center;flex-wrap:wrap;gap:5px}.pipeline-trace span{display:inline-flex;align-items:center;gap:4px;color:#8bdeb4;font-size:7px;text-transform:capitalize;border:1px solid #263c37;background:#121d1c;border-radius:5px;padding:5px 6px}.pipeline-trace span i{font-style:normal;color:#64728b;margin-left:4px}
 @media(max-width:600px){.service-grid{grid-template-columns:1fr}.user-button{padding-left:4px}}

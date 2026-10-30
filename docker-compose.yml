@@ -50,7 +50,6 @@ services:
     command: ["python", "worker.py"]
     environment:
       AMQP_URL: amqp://${RABBITMQ_USER:-enterpriseai}:${RABBITMQ_PASSWORD}@rabbitmq:5672/
-      N8N_WEBHOOK_URL: ${N8N_WEBHOOK_URL:-}
       ZAPIER_WEBHOOK_URL: ${ZAPIER_WEBHOOK_URL:-}
     depends_on:
       rabbitmq: { condition: service_healthy }
@@ -126,18 +125,6 @@ services:
       interval: 15s
       timeout: 10s
       retries: 20
-  n8n:
-    image: n8nio/n8n:2.46.2
-    restart: unless-stopped
-    environment:
-      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
-      N8N_HOST: ${N8N_HOST:-localhost}
-      N8N_PROTOCOL: ${N8N_PROTOCOL:-http}
-      WEBHOOK_URL: ${N8N_WEBHOOK_BASE_URL:-http://localhost:5678/}
-      N8N_DIAGNOSTICS_ENABLED: "false"
-      N8N_PERSONALIZATION_ENABLED: "false"
-    ports: ["127.0.0.1:${N8N_PORT:-5678}:5678"]
-    volumes: [n8n-data:/home/node/.n8n]
   prometheus:
     image: prom/prometheus:v3.15.0
     restart: unless-stopped
@@ -180,6 +167,5 @@ volumes:
   redis-data: {}
   ollama-data: {}
   whisper-data: {}
-  n8n-data: {}
   prometheus-data: {}
   grafana-data: {}

@@ -1,12 +1,12 @@
-"""Durable automation-event consumer. Human-approved events flow to n8n and Zapier."""
+"""Durable automation-event consumer. Human-approved events flow to Zapier."""
 import asyncio, json, os
 import aio_pika
 import httpx
 
 async def deliver(url: str, event: dict):
     if not url: return
-    if not url.startswith("https://") and not url.startswith("http://n8n:5678/"):
-        raise ValueError("Automation webhooks must use HTTPS or the internal n8n service")
+    if not url.startswith("https://hooks.zapier.com/"):
+        raise ValueError("Configure a Zapier Catch Hook HTTPS URL")
     async with httpx.AsyncClient(timeout=20) as client:
         response=await client.post(url,json=event); response.raise_for_status()
 
@@ -20,7 +20,6 @@ async def main():
             async for message in messages:
                 try:
                     event=json.loads(message.body)
-                    await deliver(os.getenv("N8N_WEBHOOK_URL", ""),event)
                     await deliver(os.getenv("ZAPIER_WEBHOOK_URL", ""),event)
                     await message.ack()
                 except Exception as exc:

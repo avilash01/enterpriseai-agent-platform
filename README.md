@@ -4,7 +4,7 @@ EnterpriseAI is a cloud-independent, locally runnable AI agent platform. Its pro
 
 ## Full local stack
 
-Docker Compose starts the React/TypeScript console, FastAPI API, LangGraph worker API, PostgreSQL, Qdrant, Neo4j, RabbitMQ, Redis, Ollama, n8n, Prometheus, and Grafana as one stack. No paid model key or cloud account is required.
+Docker Compose starts the React/TypeScript console, FastAPI API, LangGraph agent workflow, Zapier delivery worker, PostgreSQL, Qdrant, Neo4j, RabbitMQ, Redis, Ollama, Prometheus, and Grafana as one stack. No paid model key or cloud account is required for local AI runs.
 
 1. Install Docker Desktop and copy `.env.example` to `.env`. Change all development passwords and secrets before exposing any port.
 2. Start the complete stack: `docker compose up --build -d`.
@@ -29,9 +29,9 @@ Image captions use the local Ollama vision model. Audio and video transcripts us
 
 ## Automation and human approval
 
-Approved workflow actions are persisted in RabbitMQ before delivery. The worker forwards events to the configured n8n webhook and Zapier Catch Hook, retries transient delivery failures with backoff, and moves events that exhaust five retries into `enterpriseai.events.dead`. The API rejects actions without explicit human approval. At least one destination URL must be configured before automation approval is accepted. Keep webhook URLs private and set them in the worker environment, never in frontend code.
+Approved workflow actions are persisted in RabbitMQ before delivery to the Zapier Catch Hook. The worker retries transient delivery failures with backoff and moves events that exhaust five retries into `enterpriseai.events.dead`. The API rejects actions without explicit human approval. Configure the Zapier hook URL in `.env` before using the automation handoff. Keep the hook URL private; it is a credential and never belongs in frontend code.
 
-To connect n8n, import `ops/n8n/enterpriseai-approved-events.json`, activate it, and set `N8N_WEBHOOK_URL=http://n8n:5678/webhook/enterpriseai-approved-events` in `.env`. This internal Docker hostname is used by the worker. Add downstream Slack, email, or CRM nodes and their credentials in n8n. To connect Zapier, create a Webhooks by Zapier Catch Hook and set its HTTPS URL as `ZAPIER_WEBHOOK_URL`. Events carry the run ID, agent names, time, and explicitly approved action payload.
+Create a Zap with **Webhooks by Zapier → Catch Hook**, then add the Slack, email, CRM, or other actions you want. Copy the Catch Hook URL into `ZAPIER_WEBHOOK_URL` in `.env`, restart the worker with `docker compose up -d worker`, and use the dashboard's explicit approval checkbox. The event includes a run ID, the eight agent names, timestamp, and any action payload you approved; it does not include the prompt or response by default.
 
 ## Security and observability
 
@@ -40,7 +40,7 @@ To connect n8n, import `ops/n8n/enterpriseai-approved-events.json`, activate it,
 - Argon2 password hashing; JWT secret is required and must be rotated for deployment.
 - Audit records cover sign-ins, agent runs, document ingestion, and approved actions.
 - Prometheus metrics are exposed at `/metrics`; Grafana provisions the Prometheus data source.
-- Health checks gate service startup. Compose persists PostgreSQL, Qdrant, Neo4j, RabbitMQ, Redis, Ollama, n8n, Prometheus, and Grafana state in named volumes.
+- Health checks gate service startup. Compose persists PostgreSQL, Qdrant, Neo4j, RabbitMQ, Redis, Ollama, Prometheus, and Grafana state in named volumes.
 
 For a different model provider, set `LLM_PROVIDER=groq`, choose a supported Groq model in `LLM_MODEL`, and supply a **rotated** `GROQ_API_KEY` through the API service's secret environment. Never commit `.env` or place model credentials in frontend variables.
 
@@ -50,4 +50,4 @@ The public GitHub Pages URL hosts the static console preview. The complete backe
 
 ## Engineering status
 
-The project now contains implementations and Compose services for each capability in the project brief. Third-party automations still need their destination URLs and app credentials configured by the workspace owner. Dashboard analytics use API-backed service status where available; historical charts are illustrative until real aggregate telemetry is wired to their queries.
+The project contains implementations and Compose services for the capabilities in the project brief. Zapier needs the workspace's private Catch Hook URL and downstream app credentials. Dashboard counts and service checks come from the API; no sample run metrics are presented as real activity.

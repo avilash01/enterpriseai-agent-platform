@@ -7,6 +7,7 @@ from typing import Annotated
 from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from prometheus_fastapi_instrumentator import Instrumentator
 from sqlalchemy import select
@@ -60,7 +61,7 @@ async def _health_checks():
         try: checks[key]=bool(await asyncio.wait_for(asyncio.to_thread(fn),timeout=4))
         except Exception: checks[key]=False
     async with httpx.AsyncClient(timeout=2) as client:
-        for key,url in [("qdrant","http://qdrant:6333/collections"),("ollama","http://ollama:11434/api/tags"),("n8n","http://n8n:5678/healthz"),("prometheus","http://prometheus:9090/-/healthy"),("grafana","http://grafana:3000/api/health")]:
+        for key,url in [("qdrant","http://qdrant:6333/collections"),("ollama","http://ollama:11434/api/tags"),("prometheus","http://prometheus:9090/-/healthy"),("grafana","http://grafana:3000/api/health")]:
             try:
                 response=await client.get(url); checks[key]=response.status_code==200
                 if key=="ollama" and checks[key]:
@@ -73,7 +74,6 @@ async def _health_checks():
         conn=await asyncio.wait_for(aio_pika.connect(os.getenv("AMQP_URL","amqp://enterpriseai:enterpriseai@rabbitmq/"),timeout=2),timeout=3)
         await conn.close(); checks["rabbitmq"]=True
     except Exception: checks["rabbitmq"]=False
-    checks["n8n_webhook_configured"]=bool(os.getenv("N8N_WEBHOOK_URL"))
     checks["zapier_webhook_configured"]=bool(os.getenv("ZAPIER_WEBHOOK_URL"))
     core=["postgresql","qdrant","neo4j","rabbitmq","redis","ollama","model_ready","embedding_model_ready"]
     return {"status":"ok" if all(checks.get(name) for name in core) else "degraded","checks":checks}
@@ -115,8 +115,8 @@ def create_user(body:UserCreate,user=Depends(require_roles("admin"))):
 async def chat(body:ChatRequest,user=Depends(current_user)):
     if body.approve_automation and user["role"] not in {"admin","editor"}:
         raise HTTPException(403,"Only an admin or editor can approve automation events")
-    if body.approve_automation and not os.getenv("N8N_WEBHOOK_URL") and not os.getenv("ZAPIER_WEBHOOK_URL"):
-        raise HTTPException(503,"Configure N8N_WEBHOOK_URL or ZAPIER_WEBHOOK_URL in the worker environment before approving automation")
+    if body.approve_automation and not os.getenv("ZAPIER_WEBHOOK_URL"):
+        raise HTTPException(503,"Configure ZAPIER_WEBHOOK_URL with your Zapier Catch Hook before approving automation")
     run_id=str(uuid.uuid4())
     try:
         graph=build_workflow(hybrid_retrieve)
@@ -129,11 +129,44 @@ async def chat(body:ChatRequest,user=Depends(current_user)):
         if body.approve_automation:
             event={"event":"enterpriseai.run.completed","run_id":run_id,"agent_framework":"langgraph","agents":AGENT_NAMES,"occurred_at":datetime.now(timezone.utc).isoformat(),"actions":body.automation_payload}
             await publish_event(event)
-            automation_status="queued_for_approved_workflow"
+            automation_status="queued_for_zapier"
         return {"answer":answer,"framework":"langgraph","agents":AGENT_NAMES,"run_id":run_id,"citations":result.get("citations",[]),"automation_status":automation_status}
     except HTTPException: raise
     except RuntimeError as exc: raise HTTPException(503,str(exc))
     except Exception as exc: raise HTTPException(502,f"Agent workflow failed: {exc}")
+
+@app.post("/api/chat/stream")
+async def chat_stream(body:ChatRequest,user=Depends(current_user)):
+    if body.approve_automation and user["role"] not in {"admin","editor"}:
+        raise HTTPException(403,"Only an admin or editor can approve Zapier actions")
+    if body.approve_automation and not os.getenv("ZAPIER_WEBHOOK_URL"):
+        raise HTTPException(503,"Configure ZAPIER_WEBHOOK_URL with your Zapier Catch Hook before approving automation")
+    run_id=str(uuid.uuid4())
+    try: graph=build_workflow(hybrid_retrieve)
+    except RuntimeError as exc: raise HTTPException(503,str(exc))
+
+    async def events():
+        state={"request":body.message,"attachments":body.attachments,"run_id":run_id}
+        yield "data: "+json.dumps({"type":"start","run_id":run_id,"agents":AGENT_NAMES})+"\n\n"
+        try:
+            async for update in graph.astream(state,stream_mode="updates"):
+                for agent,values in update.items():
+                    state.update(values)
+                    yield "data: "+json.dumps({"type":"agent_completed","agent":agent})+"\n\n"
+            answer=state.get("answer","")
+            if not answer: raise RuntimeError("The agent workflow completed without a final answer")
+            with SessionLocal.begin() as db:
+                db.add(RunRecord(id=run_id,user_id=user["id"],request_hash=__import__("hashlib").sha256(body.message.encode()).hexdigest(),answer=answer,citations=json.dumps(state.get("citations",[]))))
+            audit(user["id"],"agent.run.completed",run_id,{"agent_count":len(AGENT_NAMES)})
+            automation_status="not_requested"
+            if body.approve_automation:
+                event={"event":"enterpriseai.run.completed","run_id":run_id,"agent_framework":"langgraph","agents":AGENT_NAMES,"occurred_at":datetime.now(timezone.utc).isoformat(),"actions":body.automation_payload}
+                await publish_event(event)
+                automation_status="queued_for_zapier"
+            yield "data: "+json.dumps({"type":"done","answer":answer,"agents":AGENT_NAMES,"citations":state.get("citations",[]),"automation_status":automation_status})+"\n\n"
+        except Exception as exc:
+            yield "data: "+json.dumps({"type":"error","message":str(exc)})+"\n\n"
+    return StreamingResponse(events(),media_type="text/event-stream",headers={"Cache-Control":"no-cache","X-Accel-Buffering":"no"})
 
 @app.post("/api/knowledge/documents",status_code=201)
 async def ingest_document(file:UploadFile=File(...),user=Depends(require_roles("admin","editor"))):
@@ -185,8 +218,8 @@ def audit_log(user=Depends(require_roles("admin","auditor"))):
 @app.post("/api/workflows/actions")
 async def workflow_action(body:ActionRequest,user=Depends(require_roles("admin","editor"))):
     if not body.approved: raise HTTPException(409,"Human approval is required before workflow execution")
-    if not os.getenv("N8N_WEBHOOK_URL") and not os.getenv("ZAPIER_WEBHOOK_URL"):
-        raise HTTPException(503,"Configure N8N_WEBHOOK_URL or ZAPIER_WEBHOOK_URL in the worker environment before approving automation")
+    if not os.getenv("ZAPIER_WEBHOOK_URL"):
+        raise HTTPException(503,"Configure ZAPIER_WEBHOOK_URL with your Zapier Catch Hook before approving automation")
     event={"event":"enterpriseai.workflow.approved","run_id":str(uuid.uuid4()),"user_id":user["id"],"action":body.action,"payload":body.payload,"approved_at":datetime.now(timezone.utc).isoformat()}
     await publish_event(event); audit(user["id"],"workflow.action.approved",body.action)
     return {"status":"queued","event":event["event"]}
