@@ -1,0 +1,25 @@
+{
+  "name": "EnterpriseAI approved workflow events",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "enterpriseai-approved-events",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "id": "0dcb7338-56a8-4e68-b938-57607e066633",
+      "name": "Receive approved EnterpriseAI event",
+      "webhookId": "enterpriseai-approved-events"
+    }
+  ],
+  "connections": {},
+  "active": false,
+  "settings": {"executionOrder": "v1"},
+  "versionId": "1a0ecbe3-a7f3-4e71-b357-4e6e56df4b56",
+  "meta": {"templateCredsSetupCompleted": true},
+  "tags": []
+}

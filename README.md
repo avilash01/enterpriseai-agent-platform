@@ -1,32 +1,53 @@
 # EnterpriseAI — Autonomous Multi-Agent Intelligence Platform
 
-A cloud-independent agent operations platform using Google's Agent Development Kit (ADK), FastAPI, and a local-first model connection. The API runs eight specialists in a deterministic sequence: intake planner → research analyst → knowledge retriever → analysis → writing → quality review → decision → automation planner. ADK is used as a Python library; the app does not require Google Cloud. LiteLLM connects ADK to Ollama or Groq.
+EnterpriseAI is a cloud-independent, locally runnable AI agent platform. Its production path uses eight cooperating LangGraph agents, hybrid vector and knowledge-graph retrieval, multimodal ingestion, durable workflow events, approval-gated automations, RBAC, audit history, and service telemetry.
 
-## Run locally
+## Full local stack
 
-1. Install [Ollama](https://ollama.com/) and pull a tool-capable model, for example `ollama pull llama3.2`.
-2. Copy `.env.example` to `.env`.
-3. Run `docker compose up --build` and open http://localhost:8080.
+Docker Compose starts the React/TypeScript console, FastAPI API, LangGraph worker API, PostgreSQL, Qdrant, Neo4j, RabbitMQ, Redis, Ollama, n8n, Prometheus, and Grafana as one stack. No paid model key or cloud account is required.
 
-On Windows and macOS, the container reaches Ollama through `host.docker.internal`. To use Groq, set `LLM_PROVIDER=groq`, set `LLM_MODEL=llama-3.3-70b-versatile` (or another current Groq model), and add a **rotated** `GROQ_API_KEY` to `.env`. Never commit `.env`; configure provider secrets in the deployment host's secret manager.
+1. Install Docker Desktop and copy `.env.example` to `.env`. Change all development passwords and secrets before exposing any port.
+2. Start the complete stack: `docker compose up --build -d`.
+3. Pull the local models into Ollama:
 
-## Zapier automation
+   ```sh
+   docker compose exec ollama ollama pull qwen2.5:7b
+   docker compose exec ollama ollama pull nomic-embed-text
+   docker compose exec ollama ollama pull llava:7b
+   ```
 
-Create a Zap with **Webhooks by Zapier → Catch Hook**, then put its hook URL in the backend-only `ZAPIER_WEBHOOK_URL` setting. Keep that URL private; it is a credential. The dashboard checkbox explicitly approves sending an `enterpriseai.run.completed` event. The payload includes the run ID, eight agent names, and timestamp; it does not include the user's prompt or answer. Map the hook fields to any Zap actions you choose, such as a Slack message, email, or CRM update. If no hook URL is configured, chat still works and the API reports `not_configured`.
+4. Open the console at http://localhost:8080 and sign in with the `ADMIN_EMAIL` and `ADMIN_PASSWORD` from `.env`.
+5. Open Grafana at http://localhost:3000. Prometheus scrapes the API at `/metrics`.
 
-## Architecture status
+Ollama serves local generation and embeddings. The eight-agent graph shares its state across intake planning, research, retrieval, analysis, drafting, review, decision, and automation planning. To use a different local model, change `LLM_MODEL` and pull it into Ollama first.
 
-- **Implemented:** React operations console; FastAPI; Google ADK sequential orchestration; eight specialist agents; LiteLLM model adapter; Ollama and Groq configuration; opt-in Zapier run-completed webhook; Docker Compose.
-- **Shown as planned in the Architecture page:** document ingestion, Qdrant vector search, Neo4j entity graph, reranking, Redis/PostgreSQL durable memory, RBAC, and production telemetry/evaluation. Those services are not implemented yet.
-- Dashboard KPIs, charts, and fleet status remain demo data. The GitHub Pages deployment is a static UI preview; the FastAPI service must run on a backend host before the hosted chat can reach it.
+## Knowledge and multimodal processing
 
-For frontend development without Docker, run `npm install` then `npm run dev`; the Vite proxy forwards `/api` to `localhost:8000`. Start the API with `python -m venv .venv`, activate it, `pip install -r backend/requirements.txt`, then `uvicorn main:app --app-dir backend --reload --port 8000`.
+Upload PDF, DOCX, text, Markdown, CSV, JSON, images, audio, and video from the Knowledge Base page. Text is parsed and chunked, embedded by Ollama, indexed in Qdrant, and linked to extracted entities in Neo4j. Retrieval combines vector similarity, lexical relevance, graph expansion, and a weighted reranking step. Redis caches retrieval results. PostgreSQL stores document metadata, user accounts, agent runs, citations, and audit events.
 
-## Architecture and roadmap
+Image captions use the local Ollama vision model. Audio and video transcripts use local Whisper; video processing samples frames and extracts the audio track. The first Whisper inference downloads its model into the API container, so allow time and disk space for that initial run.
 
-- React + TypeScript dashboard and FastAPI API.
-- Ollama-compatible local inference by default; Groq API is optional and secrets stay in the backend environment.
-- Docker Compose deployment, independent of a cloud vendor.
-- Next slices: LangGraph orchestration and durable run state; document ingestion and hybrid retrieval; approval-gated tools; evaluation, audit records, RBAC, and service monitoring.
+## Automation and human approval
 
-The screenshots are visual references. Current charts, statuses, graph nodes, and KPI values are demonstration data and should not be interpreted as telemetry from a live system.
+Approved workflow actions are persisted in RabbitMQ before delivery. The worker forwards events to the configured n8n webhook and Zapier Catch Hook, retries transient delivery failures with backoff, and moves events that exhaust five retries into `enterpriseai.events.dead`. The API rejects actions without explicit human approval. At least one destination URL must be configured before automation approval is accepted. Keep webhook URLs private and set them in the worker environment, never in frontend code.
+
+To connect n8n, import `ops/n8n/enterpriseai-approved-events.json`, activate it, and set `N8N_WEBHOOK_URL=http://n8n:5678/webhook/enterpriseai-approved-events` in `.env`. This internal Docker hostname is used by the worker. Add downstream Slack, email, or CRM nodes and their credentials in n8n. To connect Zapier, create a Webhooks by Zapier Catch Hook and set its HTTPS URL as `ZAPIER_WEBHOOK_URL`. Events carry the run ID, agent names, time, and explicitly approved action payload.
+
+## Security and observability
+
+- JWT login backed by PostgreSQL; supported roles are `admin`, `editor`, `auditor`, and `viewer`.
+- Document ingestion requires `admin` or `editor`; audit history requires `admin` or `auditor`.
+- Argon2 password hashing; JWT secret is required and must be rotated for deployment.
+- Audit records cover sign-ins, agent runs, document ingestion, and approved actions.
+- Prometheus metrics are exposed at `/metrics`; Grafana provisions the Prometheus data source.
+- Health checks gate service startup. Compose persists PostgreSQL, Qdrant, Neo4j, RabbitMQ, Redis, Ollama, n8n, Prometheus, and Grafana state in named volumes.
+
+For a different model provider, set `LLM_PROVIDER=groq`, choose a supported Groq model in `LLM_MODEL`, and supply a **rotated** `GROQ_API_KEY` through the API service's secret environment. Never commit `.env` or place model credentials in frontend variables.
+
+## Hosted deployment
+
+The public GitHub Pages URL hosts the static console preview. The complete backend and data plane run through Docker Compose; they are not hosted by GitHub Pages. To make the public UI use a hosted API, deploy the entire Compose stack on a Docker host, set its secure service secrets, and set `VITE_API_BASE_URL` at frontend build time to the API origin. Do not expose database, vector, graph, queue, cache, or model ports to the public internet.
+
+## Engineering status
+
+The project now contains implementations and Compose services for each capability in the project brief. Third-party automations still need their destination URLs and app credentials configured by the workspace owner. Dashboard analytics use API-backed service status where available; historical charts are illustrative until real aggregate telemetry is wired to their queries.
