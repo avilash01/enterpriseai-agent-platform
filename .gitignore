@@ -1,6 +1,6 @@
 node_modules/
 dist/
-.tsbuildinfo
+*.tsbuildinfo
 .env
 .npm-cache/
 __pycache__/
