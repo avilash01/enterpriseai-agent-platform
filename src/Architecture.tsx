@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowRight, Bot, Boxes, Braces, CheckCircle2, Database, FileText, GitBranch, LockKeyhole, Radio, Search, Server, ShieldCheck, Sparkles, Workflow, Zap } from 'lucide-react';
+import { Activity, ArrowDown, ArrowRight, Bot, Boxes, Braces, CheckCircle2, ClipboardList, Database, FileText, GitBranch, LockKeyhole, Radio, Scale, Search, Server, ShieldCheck, Workflow, Zap } from 'lucide-react';
 
 const stages=[
   {title:'Web console',sub:'React · TypeScript',icon:Boxes,state:'Live in MVP',tone:'violet'},
@@ -7,10 +7,14 @@ const stages=[
   {title:'Approval gate',sub:'Opt-in Zapier event only',icon:LockKeyhole,state:'Live in MVP',tone:'amber'},
 ];
 const modules=[
-  {name:'Research analyst',desc:'Frames the task; no invented retrieval',icon:Search,tone:'cyan',state:'Agent'},
-  {name:'Analysis agent',desc:'Separates supplied facts and inference',icon:Sparkles,tone:'violet',state:'Agent'},
-  {name:'Writing agent',desc:'Drafts from shared workflow state',icon:FileText,tone:'amber',state:'Agent'},
-  {name:'Quality reviewer',desc:'Checks grounding before final response',icon:ShieldCheck,tone:'green',state:'Agent'},
+  {name:'Intake planner',desc:'Bounds the request and sets a plan',icon:ClipboardList,tone:'violet',state:'Agent'},
+  {name:'Research analyst',desc:'Extracts supplied context; no invented sources',icon:Search,tone:'cyan',state:'Agent'},
+  {name:'Knowledge retriever',desc:'Reports source coverage honestly',icon:Database,tone:'amber',state:'Agent'},
+  {name:'Analysis agent',desc:'Separates supplied facts and inference',icon:Activity,tone:'green',state:'Agent'},
+  {name:'Writing agent',desc:'Drafts from shared workflow state',icon:FileText,tone:'violet',state:'Agent'},
+  {name:'Quality reviewer',desc:'Checks grounding before final response',icon:ShieldCheck,tone:'cyan',state:'Agent'},
+  {name:'Decision agent',desc:'Recommends a next step for human review',icon:Scale,tone:'amber',state:'Agent'},
+  {name:'Automation planner',desc:'Prepares an optional Zapier follow-up',icon:Workflow,tone:'green',state:'Agent'},
 ];
 export default function Architecture(){return <div className="arch-page">
   <div className="arch-intro"><div><div className="arch-kicker"><Radio size={13}/> CLOUD-INDEPENDENT · CONTAINER-FIRST</div><h2>Enterprise agent architecture</h2><p>Google ADK orchestrates the request. Model and automation credentials stay server-side. The current build runs locally with Docker Compose.</p></div><div className="arch-badge"><CheckCircle2 size={14}/> MVP architecture</div></div>

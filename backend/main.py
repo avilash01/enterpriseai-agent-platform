@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
-from agent_workflow import build_workflow
+from agent_workflow import AGENT_NAMES, build_workflow
 
 app = FastAPI(title="EnterpriseAI API", version="0.1.0")
 app.add_middleware(CORSMiddleware, allow_origins=os.getenv("CORS_ORIGINS", "http://localhost:5173").split(","), allow_methods=["*"], allow_headers=["*"])
@@ -23,7 +23,7 @@ class ChatRequest(BaseModel):
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "provider": os.getenv("LLM_PROVIDER", "ollama"), "model": os.getenv("LLM_MODEL", "llama3.2"), "agent_framework": "google-adk", "zapier_configured": bool(os.getenv("ZAPIER_WEBHOOK_URL"))}
+    return {"status": "ok", "provider": os.getenv("LLM_PROVIDER", "ollama"), "model": os.getenv("LLM_MODEL", "llama3.2"), "agent_framework": "google-adk", "agent_count": len(AGENT_NAMES), "zapier_configured": bool(os.getenv("ZAPIER_WEBHOOK_URL"))}
 
 @app.post("/api/chat")
 async def chat(body: ChatRequest):
@@ -58,7 +58,7 @@ async def chat(body: ChatRequest):
         automation_status = await asyncio.to_thread(_send_zapier_event, run_id)
     else:
         run_id = str(uuid.uuid4())
-    return {"answer": answer, "provider": os.getenv("LLM_PROVIDER", "ollama"), "model": os.getenv("LLM_MODEL", "llama3.2"), "framework": "google-adk", "agents": ["research_agent", "analysis_agent", "writing_agent", "quality_reviewer"], "run_id": run_id, "zapier_status": automation_status}
+    return {"answer": answer, "provider": os.getenv("LLM_PROVIDER", "ollama"), "model": os.getenv("LLM_MODEL", "llama3.2"), "framework": "google-adk", "agents": AGENT_NAMES, "run_id": run_id, "zapier_status": automation_status}
 
 def _send_zapier_event(run_id: str) -> str:
     webhook_url = os.getenv("ZAPIER_WEBHOOK_URL", "").strip()
@@ -67,7 +67,7 @@ def _send_zapier_event(run_id: str) -> str:
     if not webhook_url.startswith("https://hooks.zapier.com/"):
         return "invalid_configuration"
     # Send run metadata only; never forward the prompt or model response by default.
-    event = {"event": "enterpriseai.run.completed", "run_id": run_id, "agent_framework": "google-adk", "agents": ["research_agent", "analysis_agent", "writing_agent", "quality_reviewer"], "occurred_at": datetime.now(timezone.utc).isoformat()}
+    event = {"event": "enterpriseai.run.completed", "run_id": run_id, "agent_framework": "google-adk", "agent_count": len(AGENT_NAMES), "agents": AGENT_NAMES, "occurred_at": datetime.now(timezone.utc).isoformat()}
     request = urllib.request.Request(webhook_url, data=json.dumps(event).encode(), headers={"Content-Type": "application/json"}, method="POST")
     try:
         with urllib.request.urlopen(request, timeout=8) as response:

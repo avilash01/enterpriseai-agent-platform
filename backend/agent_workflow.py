@@ -1,9 +1,20 @@
-"""EnterpriseAI multi-agent pipeline implemented with Google's ADK."""
+"""Eight-specialist EnterpriseAI pipeline implemented with Google's ADK."""
 import os
 
 from google.adk.agents.llm_agent import LlmAgent
 from google.adk.agents.sequential_agent import SequentialAgent
 from google.adk.models.lite_llm import LiteLlm
+
+AGENT_NAMES = [
+    "intake_planner",
+    "research_analyst",
+    "knowledge_retriever",
+    "analysis_agent",
+    "writing_agent",
+    "quality_reviewer",
+    "decision_agent",
+    "automation_planner",
+]
 
 
 def _model():
@@ -21,48 +32,96 @@ def _model():
 
 def build_workflow():
     model = _model()
-    research = LlmAgent(
-        name="research_agent",
+    intake = LlmAgent(
+        name=AGENT_NAMES[0],
         model=model,
-        description="Frames the task and identifies evidence and missing information.",
-        instruction="""You are the Research Analyst in a multi-agent workflow. Work only from the user's request and context actually present in this session. Do not claim to search the web, files, or a knowledge base unless a retrieval tool has provided results. Identify the key question, useful facts supplied by the user, assumptions, and unknowns. Be concise.""",
+        description="Clarifies the request and proposes a bounded plan.",
+        instruction="""You are the Intake Planner. Restate the user's objective in one line, identify the requested deliverable, and create a short ordered plan. Do not perform external actions or invent missing context.""",
+        output_key="work_plan",
+    )
+    research = LlmAgent(
+        name=AGENT_NAMES[1],
+        model=model,
+        description="Extracts useful evidence from the request and supplied context.",
+        instruction="""You are the Research Analyst. Work only from the user's request and context actually present. Do not claim web, file, or knowledge-base searches. Identify relevant supplied facts, assumptions, and unknowns.
+
+Plan:
+{work_plan}""",
         output_key="research_notes",
     )
-    analysis = LlmAgent(
-        name="analysis_agent",
+    retrieval = LlmAgent(
+        name=AGENT_NAMES[2],
         model=model,
-        description="Analyzes the research notes and builds a reasoned answer plan.",
-        instruction="""You are the Analysis Agent. Analyze the request and the Research Analyst notes below. Separate supported facts from inference, surface risks, and create a short answer plan. Do not invent evidence.
+        description="Checks for available retrieval context and reports coverage honestly.",
+        instruction="""You are the Knowledge Retriever. No vector or graph retrieval tool is currently connected. Do not fabricate retrieved passages or sources. Summarize any source material explicitly supplied in the conversation; otherwise state that no indexed knowledge sources were available for this run.
 
 Research notes:
 {research_notes}""",
+        output_key="retrieval_notes",
+    )
+    analysis = LlmAgent(
+        name=AGENT_NAMES[3],
+        model=model,
+        description="Separates evidence from inference and analyzes the task.",
+        instruction="""You are the Analysis Agent. Analyze the request using the research notes and retrieval coverage. Separate supported facts from inference, surface material risks, and create a concise answer plan. Never treat missing retrieval as evidence.
+
+Research:
+{research_notes}
+
+Retrieval:
+{retrieval_notes}""",
         output_key="analysis_notes",
     )
     writing = LlmAgent(
-        name="writing_agent",
+        name=AGENT_NAMES[4],
         model=model,
-        description="Drafts a clear answer grounded in the preceding agent outputs.",
-        instruction="""You are the Writing Agent. Draft a useful, direct response to the user's request using the research and analysis below. Preserve uncertainty, do not invent citations or claim actions that were not performed.
+        description="Drafts a useful response grounded in the workflow state.",
+        instruction="""You are the Writing Agent. Draft a direct, useful response to the user's request using the plan, research, retrieval status, and analysis. Preserve uncertainty and do not invent citations or claim actions that were not performed.
 
-Research notes:
-{research_notes}
-
-Analysis:
-{analysis_notes}""",
+Plan: {work_plan}
+Research: {research_notes}
+Retrieval: {retrieval_notes}
+Analysis: {analysis_notes}""",
         output_key="draft_answer",
     )
     review = LlmAgent(
-        name="quality_reviewer",
+        name=AGENT_NAMES[5],
         model=model,
-        description="Checks grounding, completeness, and clarity before returning the final answer.",
-        instruction="""You are the Quality Reviewer. Check the draft for unsupported claims, missing caveats, and clarity. Return only the corrected final answer. If no retrieval results were supplied, do not imply the answer is grounded in company documents.
+        description="Reviews grounding, completeness, and clarity.",
+        instruction="""You are the Quality Reviewer. Check the draft for unsupported claims, missing caveats, and clarity. Return a corrected draft only. Do not imply company documents were searched when retrieval reported none.
 
 Draft:
-{draft_answer}""",
+{draft_answer}
+
+Retrieval status:
+{retrieval_notes}""",
+        output_key="reviewed_answer",
+    )
+    decision = LlmAgent(
+        name=AGENT_NAMES[6],
+        model=model,
+        description="Makes a recommendation without executing external actions.",
+        instruction="""You are the Decision Agent. Review the user's objective and the reviewed answer. State the best next step or recommendation, and whether a human should review it. You cannot approve or execute external actions. Keep this as a short internal note for the final agent.
+
+Reviewed answer:
+{reviewed_answer}""",
+        output_key="decision_note",
+    )
+    automation = LlmAgent(
+        name=AGENT_NAMES[7],
+        model=model,
+        description="Prepares the final response and a safe, optional Zapier follow-up.",
+        instruction="""You are the Automation Planner and final response agent. Return the reviewed answer to the user. If useful, append one concise suggested Zapier follow-up, clearly labeled as a suggestion. Never claim a Zap action ran. Zapier receives only a run-completed metadata event after explicit user approval; this agent cannot send prompts or answers to Zapier.
+
+Reviewed answer:
+{reviewed_answer}
+
+Decision note:
+{decision_note}""",
         output_key="final_answer",
     )
     return SequentialAgent(
         name="enterpriseai_orchestrator",
-        description="Runs research, analysis, writing, and quality review in sequence.",
-        sub_agents=[research, analysis, writing, review],
+        description="Runs eight specialist agents in a traceable deterministic sequence.",
+        sub_agents=[intake, research, retrieval, analysis, writing, review, decision, automation],
     )
