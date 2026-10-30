@@ -1,4 +1,4 @@
-import { Activity, ArrowDown, ArrowRight, AudioLines, Bot, Boxes, Braces, CheckCircle2, ClipboardList, Database, FileText, GitBranch, LockKeyhole, Radio, Scale, Search, Server, ShieldCheck, Workflow, Zap } from 'lucide-react';
+import { Activity, ArrowDown, ArrowRight, AudioLines, Bot, Boxes, Braces, ClipboardList, Database, FileText, GitBranch, LockKeyhole, Radio, Scale, Search, Server, ShieldCheck, Workflow, Zap } from 'lucide-react';
 
 const stages=[
   {title:'React console',sub:'React · TypeScript',icon:Boxes,tone:'violet'},

@@ -31,7 +31,7 @@ Image captions use the local Ollama vision model. Audio and video transcripts us
 
 Approved workflow actions are persisted in RabbitMQ before delivery to the Zapier Catch Hook. The worker retries transient delivery failures with backoff and moves events that exhaust five retries into `enterpriseai.events.dead`. The API rejects actions without explicit human approval. Configure the Zapier hook URL in `.env` before using the automation handoff. Keep the hook URL private; it is a credential and never belongs in frontend code.
 
-Create a Zap with **Webhooks by Zapier → Catch Hook**, then add the Slack, email, CRM, or other actions you want. Copy the Catch Hook URL into `ZAPIER_WEBHOOK_URL` in `.env`, restart the worker with `docker compose up -d worker`, and use the dashboard's explicit approval checkbox. The event includes a run ID, the eight agent names, timestamp, and any action payload you approved; it does not include the prompt or response by default.
+Create a Zap with **Webhooks by Zapier → Catch Hook**, then add **Gmail → Send Email** (or another action). Connect Gmail in Zapier with Google's sign-in and consent flow. Copy the private Catch Hook URL into `ZAPIER_WEBHOOK_URL` in `.env`, restart the worker with `docker compose up -d worker`, then run an agent prompt with the Zapier approval box checked. After the first event arrives, map the `request` and `answer` fields into the Gmail message. The approval box explicitly authorizes forwarding that prompt and final answer; without it, no event is sent. Each forwarded event also carries the run ID, agent names, timestamp, and any approved action payload. The approval is recorded in the audit log.
 
 ## Security and observability
 
@@ -46,7 +46,16 @@ For a different model provider, set `LLM_PROVIDER=groq`, choose a supported Groq
 
 ## Hosted deployment
 
-The public GitHub Pages URL hosts the static console preview. The complete backend and data plane run through Docker Compose; they are not hosted by GitHub Pages. To make the public UI use a hosted API, deploy the entire Compose stack on a Docker host, set its secure service secrets, and set `VITE_API_BASE_URL` at frontend build time to the API origin. Do not expose database, vector, graph, queue, cache, or model ports to the public internet.
+GitHub Pages hosts an architecture preview only. It does not run the API, agent models, databases, queue, or Zapier worker. For a complete deployment, use a Linux Docker host with persistent disk, a DNS name pointing to that host, and inbound TCP ports 80 and 443 open. The production overlay adds Caddy for automatic HTTPS; only Caddy's web ports are public. Data services remain on the private Compose network.
+
+1. Copy `.env.example` to `.env`. Replace every development password and the JWT secret with unique random values. Set `ADMIN_EMAIL`, `ADMIN_PASSWORD`, and `DOMAIN` to your values. Set `CORS_ORIGINS=https://your-domain` and `ZAPIER_WEBHOOK_URL` to the regenerated private Catch Hook URL. Do not commit `.env`.
+2. Point your domain's DNS A record at the host and allow TCP ports 80 and 443 through its firewall.
+3. Start the complete stack from the repository directory: `docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d`.
+4. Pull the local models: `docker compose exec ollama ollama pull qwen2.5:7b`, then pull `nomic-embed-text` and `llava:7b`. The first model downloads need time and persistent disk space.
+5. Open `https://your-domain` and sign in with the admin credentials from `.env`. The frontend uses same-origin `/api` requests through Nginx; no frontend API secret or public database port is needed.
+6. In Zapier, test the Catch Hook with a live approved agent run. Map its `request` and `answer` fields in **Gmail → Send Email**, test the action, then publish the Zap. Each checked approval forwards the prompt and final answer; unchecked runs never send them.
+
+If deploying without a DNS name, use the local Compose instructions instead of the production HTTPS overlay. Do not expose database, vector, graph, queue, cache, or Ollama ports to the public internet.
 
 ## Engineering status
 

@@ -127,8 +127,9 @@ async def chat(body:ChatRequest,user=Depends(current_user)):
         audit(user["id"],"agent.run.completed",run_id,{"agent_count":len(AGENT_NAMES)})
         automation_status="not_requested"
         if body.approve_automation:
-            event={"event":"enterpriseai.run.completed","run_id":run_id,"agent_framework":"langgraph","agents":AGENT_NAMES,"occurred_at":datetime.now(timezone.utc).isoformat(),"actions":body.automation_payload}
+            event={"event":"enterpriseai.run.completed","run_id":run_id,"agent_framework":"langgraph","agents":AGENT_NAMES,"occurred_at":datetime.now(timezone.utc).isoformat(),"request":body.message,"answer":answer,"actions":body.automation_payload}
             await publish_event(event)
+            audit(user["id"],"workflow.zapier.approved",run_id,{"prompt_and_answer_forwarded":True})
             automation_status="queued_for_zapier"
         return {"answer":answer,"framework":"langgraph","agents":AGENT_NAMES,"run_id":run_id,"citations":result.get("citations",[]),"automation_status":automation_status}
     except HTTPException: raise
@@ -160,8 +161,9 @@ async def chat_stream(body:ChatRequest,user=Depends(current_user)):
             audit(user["id"],"agent.run.completed",run_id,{"agent_count":len(AGENT_NAMES)})
             automation_status="not_requested"
             if body.approve_automation:
-                event={"event":"enterpriseai.run.completed","run_id":run_id,"agent_framework":"langgraph","agents":AGENT_NAMES,"occurred_at":datetime.now(timezone.utc).isoformat(),"actions":body.automation_payload}
+                event={"event":"enterpriseai.run.completed","run_id":run_id,"agent_framework":"langgraph","agents":AGENT_NAMES,"occurred_at":datetime.now(timezone.utc).isoformat(),"request":body.message,"answer":answer,"actions":body.automation_payload}
                 await publish_event(event)
+                audit(user["id"],"workflow.zapier.approved",run_id,{"prompt_and_answer_forwarded":True})
                 automation_status="queued_for_zapier"
             yield "data: "+json.dumps({"type":"done","answer":answer,"agents":AGENT_NAMES,"citations":state.get("citations",[]),"automation_status":automation_status})+"\n\n"
         except Exception as exc:
