@@ -3,7 +3,8 @@ import { Activity, AudioLines, Bot, BrainCircuit, Check, ChevronDown, Database, 
 import Architecture from './Architecture';
 import './ui.css';
 
-const API=import.meta.env.VITE_API_BASE_URL||'';
+const API=(import.meta.env.VITE_API_BASE_URL||'').replace(/\/$/,'');
+const isStaticPreview=!API&&window.location.hostname.endsWith('.github.io');
 const agentNames=['Intake Planner','Research Analyst','Knowledge Retriever','Analysis Agent','Writing Agent','Quality Reviewer','Decision Agent','Automation Planner'];
 type User={id:string;email:string;role:string};
 type Health={status:string;provider:string;model:string;checks?:Record<string,boolean>};
@@ -26,11 +27,24 @@ export default function App(){
   const [password,setPassword]=useState('');
   const [authError,setAuthError]=useState('');
   const [busy,setBusy]=useState(false);
-  useEffect(()=>{fetch(`${API}/api/health`).then(r=>r.json()).then(setHealth).catch(()=>setHealth(null))},[]);
-  useEffect(()=>{if(token)api('/api/auth/me',token).then(setUser).catch(()=>{localStorage.removeItem('enterpriseai-token');setToken('');setUser(null)})},[token]);
+  useEffect(()=>{if(isStaticPreview)return;fetch(`${API}/api/health`).then(r=>r.json()).then(setHealth).catch(()=>setHealth(null))},[]);
+  useEffect(()=>{if(token&&!isStaticPreview)api('/api/auth/me',token).then(setUser).catch(()=>{localStorage.removeItem('enterpriseai-token');setToken('');setUser(null)})},[token]);
   async function login(e:React.FormEvent){e.preventDefault();setBusy(true);setAuthError('');try{const d=await api('/api/auth/login','',{method:'POST',body:JSON.stringify({email,password})});localStorage.setItem('enterpriseai-token',d.access_token);setToken(d.access_token);setUser(d.user)}catch(err){setAuthError(err instanceof Error?err.message:'Sign-in failed')}finally{setBusy(false)}}
   function logout(){localStorage.removeItem('enterpriseai-token');setToken('');setUser(null)}
-  if(!token||!user)return <div className="login-shell"><form className="login-card" onSubmit={login}><div className="login-brand"><span className="brandmark"><BrainCircuit size={21}/></span><span>enterprise<span className="brand-light">ai</span></span></div><h1>Sign in to your workspace</h1><p>Access agent runs, knowledge, and approved workflows. GitHub Pages is a static preview; run Docker Compose to connect the complete API and data plane.</p><label>Email</label><input type="email" required autoComplete="username" value={email} onChange={e=>setEmail(e.target.value)} placeholder="admin@enterpriseai.local"/><label>Password</label><input type="password" required autoComplete="current-password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="Workspace password"/>{authError&&<div className="form-error">{authError}</div>}<button className="btn primary" disabled={busy}>{busy?'Signing in…':'Sign in'}</button><small className="login-hint">Use the credentials in your local `.env` file.</small></form></div>;
+  if(isStaticPreview)return <main className="preview-shell">
+    <header className="preview-header"><div className="login-brand"><span className="brandmark"><BrainCircuit size={21}/></span><span>enterprise<span className="brand-light">ai</span></span></div><span className="preview-label"><i/> PUBLIC UI PREVIEW</span></header>
+    <section className="preview-hero"><div><div className="arch-kicker"><Radio size={13}/> AUTONOMOUS MULTI-AGENT INTELLIGENCE</div><h1>EnterpriseAI</h1><p>A cloud-independent agent platform with eight LangGraph specialists, hybrid retrieval, multimodal knowledge ingestion, and human-approved Zapier automation.</p></div><a className="preview-source" href="https://github.com/avilash01/enterpriseai-agent-platform" target="_blank" rel="noreferrer">Source and deployment guide <GitBranch size={14}/></a></section>
+    <section className="preview-status-grid" aria-label="Deployment status">
+      <article className="preview-status"><span className="preview-status-dot ready"/><div><b>Web console</b><small>Published on GitHub Pages</small></div><strong>Online</strong></article>
+      <article className="preview-status"><span className="preview-status-dot waiting"/><div><b>Backend API</b><small>Needs a Docker host</small></div><strong>Not connected</strong></article>
+      <article className="preview-status"><span className="preview-status-dot waiting"/><div><b>Agent services</b><small>Run as a Compose stack</small></div><strong>Not running</strong></article>
+      <article className="preview-status"><span className="preview-status-dot waiting"/><div><b>Zapier handoff</b><small>Private Catch Hook required</small></div><strong>Not connected</strong></article>
+    </section>
+    <div className="preview-notice"><ShieldCheck size={17}/><p><b>Sign-in is disabled in this preview.</b> The API is not deployed, so credentials cannot be checked here. Once the backend is hosted and its HTTPS address is configured for this frontend, this page will use the live workspace login.</p></div>
+    <Architecture/>
+    <footer className="preview-footer"><span>Architecture and capabilities are defined in the repository.</span><span>Live metrics and agent activity appear after deployment.</span></footer>
+  </main>;
+  if(!token||!user)return <div className="login-shell"><form className="login-card" onSubmit={login}><div className="login-brand"><span className="brandmark"><BrainCircuit size={21}/></span><span>enterprise<span className="brand-light">ai</span></span></div><h1>Sign in to your workspace</h1><p>Access agent runs, knowledge, and approved workflows.</p><label>Email</label><input type="email" required autoComplete="username" value={email} onChange={e=>setEmail(e.target.value)} placeholder="admin@enterpriseai.local"/><label>Password</label><input type="password" required autoComplete="current-password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="Workspace password"/>{authError&&<div className="form-error">{authError}</div>}<button className="btn primary" disabled={busy}>{busy?'Signing in…':'Sign in'}</button><small className="login-hint">Use the credentials in your local `.env` file.</small></form></div>;
   const nav=[['Overview',Gauge],['Agent studio',Bot],['Architecture',Network],['Knowledge base',Database],['Workflows',GitBranch],['Runs & traces',Activity],['Evaluations',Check],['Integrations',Workflow],['Settings',Settings2]] as const;
   return <div className="shell">
     <aside className={`sidebar ${mobile?'show':''}`}>
