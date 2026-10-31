@@ -12,9 +12,9 @@ from pydantic import BaseModel, Field
 from prometheus_fastapi_instrumentator import Instrumentator
 from sqlalchemy import select
 import httpx
-from agent_workflow import AGENT_NAMES, build_workflow, evaluate_run
+from agent_workflow import AGENT_CATALOG, AGENT_NAMES, build_workflow, evaluate_run
 from enterprise_platform import (AuditEvent, EvaluationRecord, KnowledgeDocument, RunRecord, SessionLocal, User, audit, decode_token,
-                      extract_file, hybrid_retrieve, index_text, initialize_database, make_token, password_hash, publish_event)
+                      extract_file, graph_expand, hybrid_retrieve, index_text, initialize_database, make_token, password_hash, persist_run_entities, publish_event)
 
 app=FastAPI(title="EnterpriseAI Autonomous Multi-Agent Intelligence Platform",version="1.0.0")
 app.add_middleware(CORSMiddleware,allow_origins=os.getenv("CORS_ORIGINS","http://localhost:8080,http://localhost:5173,https://avilash01.github.io").split(","),allow_methods=["*"],allow_headers=["*"])
@@ -50,14 +50,12 @@ def _db_check():
 def _redis_check():
     from redis import Redis
     return bool(Redis.from_url(os.getenv("REDIS_URL","redis://redis:6379/0"),socket_timeout=2).ping())
-def _neo_check():
-    from neo4j import GraphDatabase
-    driver=GraphDatabase.driver(os.getenv("NEO4J_URI","bolt://neo4j:7687"),auth=(os.getenv("NEO4J_USER","neo4j"),os.getenv("NEO4J_PASSWORD","enterpriseai")),connection_timeout=2)
-    try: driver.verify_connectivity(); return True
-    finally: driver.close()
+def _falkor_check():
+    from enterprise_platform import _falkor_graph
+    return bool(_falkor_graph().query("RETURN 1").result_set)
 async def _health_checks():
     checks={}
-    for key, fn in [("postgresql",_db_check),("redis",_redis_check),("neo4j",_neo_check)]:
+    for key, fn in [("postgresql",_db_check),("redis",_redis_check),("falkordb",_falkor_check)]:
         try: checks[key]=bool(await asyncio.wait_for(asyncio.to_thread(fn),timeout=4))
         except Exception: checks[key]=False
     async with httpx.AsyncClient(timeout=2) as client:
@@ -68,14 +66,17 @@ async def _health_checks():
                     names={m.get("name","").split(":")[0] for m in response.json().get("models",[])}
                     checks["model_ready"]=(bool(os.getenv("GROQ_API_KEY")) if os.getenv("LLM_PROVIDER","ollama").lower()=="groq" else os.getenv("LLM_MODEL","qwen2.5:7b").split(":")[0] in names)
                     checks["embedding_model_ready"]=os.getenv("EMBEDDING_MODEL","nomic-embed-text").split(":")[0] in names
-            except Exception: checks[key]=False
-    try:
-        import aio_pika
-        conn=await asyncio.wait_for(aio_pika.connect(os.getenv("AMQP_URL","amqp://enterpriseai:enterpriseai@rabbitmq/"),timeout=2),timeout=3)
-        await conn.close(); checks["rabbitmq"]=True
-    except Exception: checks["rabbitmq"]=False
+            except Exception:
+                checks[key]=False
+                if key=="ollama" and os.getenv("LLM_PROVIDER","ollama").lower()=="groq":
+                    checks["model_ready"]=bool(os.getenv("GROQ_API_KEY"))
+                    checks["embedding_model_ready"]=False
     checks["zapier_webhook_configured"]=bool(os.getenv("ZAPIER_WEBHOOK_URL"))
-    core=["postgresql","qdrant","neo4j","rabbitmq","redis","ollama","model_ready","embedding_model_ready"]
+    checks["redis_stream_ready"]=checks.get("redis",False)
+    if os.getenv("LLM_PROVIDER","ollama").lower()=="groq":
+        core=["postgresql","qdrant","falkordb","redis","model_ready","embedding_model_ready"]
+    else:
+        core=["postgresql","qdrant","falkordb","redis","ollama","model_ready","embedding_model_ready"]
     return {"status":"ok" if all(checks.get(name) for name in core) else "degraded","checks":checks}
 
 @app.get("/api/health")
@@ -95,7 +96,7 @@ def me(user=Depends(current_user)): return user
 
 @app.get("/api/agents")
 def agents(user=Depends(current_user)):
-    return {"framework":"langgraph","agents":[{"id":name,"status":"ready"} for name in AGENT_NAMES]}
+    return {"framework":"langgraph","agents":[{**agent.__dict__,"status":"ready"} for agent in AGENT_CATALOG]}
 
 @app.get("/api/users")
 def users(user=Depends(require_roles("admin"))):
@@ -119,7 +120,7 @@ async def chat(body:ChatRequest,user=Depends(current_user)):
         raise HTTPException(503,"Configure ZAPIER_WEBHOOK_URL with your Zapier Catch Hook before approving automation")
     run_id=str(uuid.uuid4())
     try:
-        graph=build_workflow(hybrid_retrieve)
+        graph=build_workflow(hybrid_retrieve,graph_expand,persist_run_entities)
         result=await graph.ainvoke({"request":body.message,"attachments":body.attachments,"run_id":run_id})
         answer=result.get("answer","")
         if not answer: raise HTTPException(502,"The agent workflow completed without a final answer")
@@ -143,7 +144,7 @@ async def chat_stream(body:ChatRequest,user=Depends(current_user)):
     if body.approve_automation and not os.getenv("ZAPIER_WEBHOOK_URL"):
         raise HTTPException(503,"Configure ZAPIER_WEBHOOK_URL with your Zapier Catch Hook before approving automation")
     run_id=str(uuid.uuid4())
-    try: graph=build_workflow(hybrid_retrieve)
+    try: graph=build_workflow(hybrid_retrieve,graph_expand,persist_run_entities)
     except RuntimeError as exc: raise HTTPException(503,str(exc))
 
     async def events():
@@ -225,4 +226,5 @@ async def workflow_action(body:ActionRequest,user=Depends(require_roles("admin",
     event={"event":"enterpriseai.workflow.approved","run_id":str(uuid.uuid4()),"user_id":user["id"],"action":body.action,"payload":body.payload,"approved_at":datetime.now(timezone.utc).isoformat()}
     await publish_event(event); audit(user["id"],"workflow.action.approved",body.action)
     return {"status":"queued","event":event["event"]}
+
 

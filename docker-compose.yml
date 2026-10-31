@@ -21,10 +21,12 @@ services:
       REDIS_URL: redis://redis:6379/0
       QDRANT_URL: http://qdrant:6333
       QDRANT_COLLECTION: enterpriseai
-      NEO4J_URI: bolt://neo4j:7687
-      NEO4J_USER: neo4j
-      NEO4J_PASSWORD: ${NEO4J_PASSWORD}
-      AMQP_URL: amqp://${RABBITMQ_USER:-enterpriseai}:${RABBITMQ_PASSWORD}@rabbitmq:5672/
+      FALKORDB_HOST: falkordb
+      FALKORDB_PORT: 6379
+      FALKORDB_GRAPH: enterpriseai
+      REDIS_STREAM: enterpriseai:events
+      REDIS_DEAD_STREAM: enterpriseai:events:dead
+      ZAPIER_WEBHOOK_URL: ${ZAPIER_WEBHOOK_URL:-}
       JWT_SECRET: ${JWT_SECRET}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@enterpriseai.local}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD}
@@ -32,9 +34,8 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
       qdrant: { condition: service_healthy }
-      neo4j: { condition: service_healthy }
+      falkordb: { condition: service_healthy }
       redis: { condition: service_healthy }
-      rabbitmq: { condition: service_healthy }
       ollama: { condition: service_healthy }
     volumes: [whisper-data:/root/.cache/huggingface]
     ports: ["127.0.0.1:${API_PORT:-8000}:8000"]
@@ -49,10 +50,12 @@ services:
     restart: unless-stopped
     command: ["python", "worker.py"]
     environment:
-      AMQP_URL: amqp://${RABBITMQ_USER:-enterpriseai}:${RABBITMQ_PASSWORD}@rabbitmq:5672/
+      REDIS_URL: redis://redis:6379/0
+      REDIS_STREAM: enterpriseai:events
+      REDIS_DEAD_STREAM: enterpriseai:events:dead
       ZAPIER_WEBHOOK_URL: ${ZAPIER_WEBHOOK_URL:-}
     depends_on:
-      rabbitmq: { condition: service_healthy }
+      redis: { condition: service_healthy }
   postgres:
     image: postgres:17-alpine
     restart: unless-stopped
@@ -75,34 +78,13 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
-  neo4j:
-    image: neo4j:5.26-community
+  falkordb:
+    image: falkordb/falkordb-server:latest
     restart: unless-stopped
-    environment:
-      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD}
-      NEO4J_server_memory_heap_initial__size: 512m
-      NEO4J_server_memory_heap_max__size: 1G
-      NEO4J_server_metrics_prometheus_enabled: "true"
-      NEO4J_server_metrics_prometheus_endpoint: 0.0.0.0:2004
-    ports: ["127.0.0.1:${NEO4J_HTTP_PORT:-7474}:7474", "127.0.0.1:${NEO4J_BOLT_PORT:-7687}:7687"]
-    volumes: [neo4j-data:/data]
+    command: ["--appendonly", "yes"]
+    volumes: [falkordb-data:/var/lib/falkordb/data]
     healthcheck:
-      test: ["CMD-SHELL", "cypher-shell -u neo4j -p \"$${NEO4J_AUTH#*/}\" 'RETURN 1' >/dev/null 2>&1"]
-      interval: 10s
-      timeout: 10s
-      retries: 20
-      start_period: 45s
-  rabbitmq:
-    image: rabbitmq:4-management-alpine
-    restart: unless-stopped
-    command: ["sh", "-c", "rabbitmq-plugins enable --offline rabbitmq_prometheus && rabbitmq-server"]
-    environment:
-      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-enterpriseai}
-      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
-    volumes: [rabbitmq-data:/var/lib/rabbitmq]
-    ports: ["127.0.0.1:${RABBITMQ_UI_PORT:-15672}:15672"]
-    healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 5s
       retries: 15
@@ -116,6 +98,13 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    profiles: ["public-preview"]
+    restart: unless-stopped
+    command: ["tunnel", "--no-autoupdate", "--url", "http://web:80"]
+    depends_on:
+      web: { condition: service_started }
   ollama:
     image: ollama/ollama:0.40.13
     restart: unless-stopped
@@ -131,7 +120,7 @@ services:
     command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.path=/prometheus"]
     volumes: [./ops/prometheus.yml:/etc/prometheus/prometheus.yml:ro, prometheus-data:/prometheus]
     ports: ["127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"]
-    depends_on: [api, worker, postgres-exporter, redis-exporter]
+    depends_on: [api, worker, postgres-exporter, redis-exporter, falkordb-exporter]
   grafana:
     image: grafana/grafana:13.2
     restart: unless-stopped
@@ -158,14 +147,21 @@ services:
       REDIS_ADDR: redis://redis:6379
     depends_on:
       redis: { condition: service_healthy }
+  falkordb-exporter:
+    image: oliver006/redis_exporter:v1.69.1
+    restart: unless-stopped
+    environment:
+      REDIS_ADDR: redis://falkordb:6379
+    depends_on:
+      falkordb: { condition: service_healthy }
 
 volumes:
   postgres-data: {}
   qdrant-data: {}
-  neo4j-data: {}
-  rabbitmq-data: {}
+  falkordb-data: {}
   redis-data: {}
   ollama-data: {}
   whisper-data: {}
   prometheus-data: {}
   grafana-data: {}
+

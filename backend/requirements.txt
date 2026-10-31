@@ -7,11 +7,10 @@ langchain-core>=0.3.58
 langchain-ollama>=0.3.3
 langchain-groq>=0.3.2
 qdrant-client>=1.13
-neo4j>=5.28
+FalkorDB==1.8.1
 SQLAlchemy>=2.0
 psycopg[binary]>=3.2
 redis>=5.2
-aio-pika>=9.5
 httpx>=0.28
 requests>=2.32
 python-jose[cryptography]>=3.3
@@ -20,3 +19,5 @@ pypdf>=5.4
 python-docx>=1.1
 faster-whisper>=1.1
 prometheus-fastapi-instrumentator>=7.1
+pytest>=8.3
+

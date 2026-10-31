@@ -14,6 +14,12 @@ if errorlevel 1 (
   goto failed
 )
 
+if not exist ".env" (
+  echo Creating private local credentials in .env...
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "$alphabet='abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789'; function New-Secret([int]$size) { $bytes=New-Object byte[] $size; $rng=[System.Security.Cryptography.RandomNumberGenerator]::Create(); $rng.GetBytes($bytes); $rng.Dispose(); -join ($bytes | ForEach-Object { $alphabet[$_ % $alphabet.Length] }) }; Copy-Item '.env.example' '.env'; $content=Get-Content '.env' -Raw; $content=$content.Replace('dev-only-postgres-change-me',(New-Secret 32)).Replace('dev-only-change-to-a-random-64-character-secret-string-now',(New-Secret 64)).Replace('dev-only-admin-change-me',(New-Secret 24)).Replace('dev-only-grafana-change-me',(New-Secret 24)); Set-Content '.env' $content -NoNewline; Write-Output 'ADMIN_EMAIL=admin@enterpriseai.local'; Write-Output ('ADMIN_PASSWORD='+((Select-String '^ADMIN_PASSWORD=' '.env').Line.Split('=',2)[1])); Write-Output 'Save this password now; the generated copy is stored privately in .env.'"
+  if errorlevel 1 goto failed
+)
+
 docker info >nul 2>&1
 if errorlevel 1 (
   echo ERROR: Docker Desktop is not ready for this Windows account.
@@ -60,3 +66,4 @@ echo Startup did not finish. Copy the error text above and share that text or a 
 echo.
 pause
 endlocal
+

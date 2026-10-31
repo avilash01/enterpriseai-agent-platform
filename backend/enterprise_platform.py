@@ -93,6 +93,76 @@ def _chunks(text: str, size=1000, overlap=140):
     return result
 def _graph_entities(text: str):
     return list(dict.fromkeys(re.findall(r"\b[A-Z][\w&.-]*(?:\s+[A-Z][\w&.-]*){0,2}\b", text)))[:40]
+
+def _falkor_graph():
+    from falkordb import FalkorDB
+    client = FalkorDB(host=os.getenv("FALKORDB_HOST", "falkordb"), port=int(os.getenv("FALKORDB_PORT", "6379")), password=os.getenv("FALKORDB_PASSWORD") or None)
+    return client.select_graph(os.getenv("FALKORDB_GRAPH", "enterpriseai"))
+
+def _persist_entity_graph(document_id: str, title: str, entities: list[str]):
+    graph = _falkor_graph()
+    graph.query("MERGE (d:Document {id:$id}) SET d.title=$title", {"id": document_id, "title": title})
+    for entity in entities:
+        graph.query("MERGE (e:Entity {name:$name})", {"name": entity})
+        graph.query("MATCH (d:Document {id:$id}), (e:Entity {name:$name}) MERGE (d)-[:MENTIONS]->(e)", {"id": document_id, "name": entity})
+    for left, right in zip(entities, entities[1:]):
+        graph.query("MATCH (a:Entity {name:$left}), (b:Entity {name:$right}) MERGE (a)-[:CO_OCCURS_WITH]->(b)", {"left": left, "right": right})
+
+def persist_run_entities(run_id: str, entities: list[str]):
+    if not run_id or not entities:
+        return {"stored": 0, "available": bool(run_id)}
+    graph = _falkor_graph()
+    graph.query("MERGE (i:Investigation {id:$id})", {"id": run_id})
+    for entity in entities:
+        graph.query("MERGE (e:Entity {name:$name})", {"name": entity})
+        graph.query("MATCH (i:Investigation {id:$id}), (e:Entity {name:$name}) MERGE (i)-[:INVOLVES]->(e)", {"id": run_id, "name": entity})
+    return {"stored": len(entities), "available": True}
+
+def _graph_expand_sync(query: str, entities: list[str], limit: int = 10):
+    names = entities or _graph_entities(query)
+    if not names:
+        return []
+    try:
+        graph = _falkor_graph()
+        direct_rows = graph.query(
+            "MATCH (e:Entity)<-[:MENTIONS]-(d:Document) "
+            "WHERE e.name IN $names RETURN DISTINCT d.id, d.title, e.name LIMIT 30",
+            {"names": names},
+        ).result_set
+        related_rows = graph.query(
+            "MATCH (e:Entity)-[:CO_OCCURS_WITH]-(related:Entity)<-[:MENTIONS]-(d:Document) "
+            "WHERE e.name IN $names RETURN DISTINCT d.id, d.title, related.name LIMIT 30",
+            {"names": names},
+        ).result_set
+        rows = list(direct_rows) + list(related_rows)
+    except Exception:
+        return []
+    results = []
+    base = os.getenv("QDRANT_URL", "http://qdrant:6333").rstrip("/")
+    collection = os.getenv("QDRANT_COLLECTION", "enterpriseai")
+    for row in rows:
+        if not row or not row[0]:
+            continue
+        try:
+            response = requests.post(
+                f"{base}/collections/{collection}/points/scroll",
+                json={"filter": {"must": [{"key": "document_id", "match": {"value": str(row[0])}}]}, "limit": 4, "with_payload": True, "with_vectors": False},
+                timeout=10,
+            )
+            response.raise_for_status()
+            points = response.json().get("result", {}).get("points", [])
+            for point in points:
+                payload = point.get("payload", {})
+                results.append({"document_id": str(row[0]), "title": payload.get("title") or row[1] or "Untitled", "text": payload.get("text", ""), "score": 0.18, "chunk_id": str(point.get("id", "")), "graph_entities": [str(row[2])] if len(row) > 2 else []})
+        except Exception:
+            continue
+    unique = {}
+    for item in results:
+        unique[(item["document_id"], item["chunk_id"])] = item
+    return list(unique.values())[:limit]
+
+async def graph_expand(query: str, entities: list[str], limit: int = 10):
+    return await asyncio.to_thread(_graph_expand_sync, query, entities, limit)
 def index_text(title: str, media_type: str, text: str):
     document_id = str(uuid.uuid4()); parts = _chunks(text)
     if not parts: raise ValueError("No text could be extracted from the file")
@@ -102,15 +172,7 @@ def index_text(title: str, media_type: str, text: str):
     except Exception: client.create_collection(collection, vectors_config=models.VectorParams(size=len(vectors[0]), distance=models.Distance.COSINE))
     client.upsert(collection, points=[models.PointStruct(id=str(uuid.uuid4()), vector=vector, payload={"document_id":document_id,"title":title,"media_type":media_type,"chunk_index":i,"text":part}) for i,(part,vector) in enumerate(zip(parts,vectors))], wait=True)
     entities = _graph_entities(text)
-    uri = os.getenv("NEO4J_URI", "bolt://neo4j:7687")
-    from neo4j import GraphDatabase
-    driver = GraphDatabase.driver(uri, auth=(os.getenv("NEO4J_USER","neo4j"), os.getenv("NEO4J_PASSWORD","enterpriseai")))
-    with driver.session() as session:
-        for entity in entities:
-            session.run("MERGE (d:Document {id:$id}) SET d.title=$title MERGE (e:Entity {name:$entity}) MERGE (d)-[:MENTIONS]->(e)", id=document_id, title=title, entity=entity)
-        for left,right in zip(entities,entities[1:]):
-            session.run("MATCH (a:Entity {name:$left}),(b:Entity {name:$right}) MERGE (a)-[:CO_OCCURS_WITH]->(b)", left=left,right=right)
-    driver.close()
+    _persist_entity_graph(document_id, title, entities)
     with SessionLocal.begin() as db: db.add(KnowledgeDocument(id=document_id,title=title,media_type=media_type,chunk_count=len(parts)))
     return {"id":document_id,"title":title,"media_type":media_type,"chunk_count":len(parts),"entities":len(entities)}
 
@@ -132,18 +194,6 @@ def _hybrid_retrieve_sync(query: str, limit=6):
         payload=point.get("payload",{}); txt=payload.get("text",""); lexical=len(terms & set(re.findall(r"\w+",txt.lower())))/max(1,len(terms)); vector_score=float(point.get("score",0)); score=.72*vector_score+.28*lexical
         hits.append({"document_id":payload.get("document_id",""),"title":payload.get("title","Untitled"),"text":txt,"score":score})
     hits.sort(key=lambda h:h["score"],reverse=True)
-    # Expand context through the knowledge graph for named entities found in the query.
-    names=_graph_entities(query)
-    if names:
-        try:
-            from neo4j import GraphDatabase
-            driver=GraphDatabase.driver(os.getenv("NEO4J_URI","bolt://neo4j:7687"),auth=(os.getenv("NEO4J_USER","neo4j"),os.getenv("NEO4J_PASSWORD","enterpriseai")))
-            with driver.session() as session:
-                rows=session.run("MATCH (e:Entity)-[:CO_OCCURS_WITH]-(related:Entity)<-[:MENTIONS]-(d:Document) WHERE e.name IN $names RETURN DISTINCT d.id AS id,d.title AS title,related.name AS entity LIMIT 20",names=names)
-                for row in rows:
-                    if row["id"] not in {h["document_id"] for h in hits}: hits.append({"document_id":row["id"],"title":row["title"],"text":f"Graph context related to {', '.join(names)}: {row['entity']}","score":.25})
-            driver.close()
-        except Exception: pass
     result=hits[:limit]
     if cache:
         try: cache.setex("retrieval:"+hashlib.sha256(query.encode()).hexdigest(),90,json.dumps(result))
@@ -154,11 +204,10 @@ async def hybrid_retrieve(query: str, limit=6):
     return await asyncio.to_thread(_hybrid_retrieve_sync,query,limit)
 
 async def publish_event(event: dict):
-    import aio_pika
-    connection=await aio_pika.connect_robust(os.getenv("AMQP_URL","amqp://enterpriseai:enterpriseai@rabbitmq/"))
-    async with connection:
-        channel=await connection.channel(); queue=await channel.declare_queue("enterpriseai.events",durable=True)
-        await channel.default_exchange.publish(aio_pika.Message(json.dumps(event).encode(),delivery_mode=aio_pika.DeliveryMode.PERSISTENT),routing_key=queue.name)
+    from redis import Redis
+    client = Redis.from_url(os.getenv("REDIS_URL", "redis://redis:6379/0"), decode_responses=True)
+    client.xadd(os.getenv("REDIS_STREAM", "enterpriseai:events"), {"payload": json.dumps(event, ensure_ascii=False), "attempts": "0"})
+    client.close()
 
 def extract_file(filename: str, content_type: str, data: bytes) -> str:
     suffix=filename.lower().rsplit(".",1)[-1] if "." in filename else ""
@@ -196,3 +245,4 @@ def extract_file(filename: str, content_type: str, data: bytes) -> str:
                 with open(frame_path,"rb") as f: transcripts.append(extract_file("frame.jpg","image/jpeg",f.read()))
             return "\n\n".join(transcripts)
     raise ValueError("Supported files: PDF, DOCX, TXT, MD, CSV, JSON, images, and audio. Video ingestion accepts MP4 and extracts audio/frames in the processing pipeline.")
+

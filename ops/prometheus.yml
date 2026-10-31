@@ -14,14 +14,11 @@ scrape_configs:
   - job_name: redis
     static_configs:
       - targets: [redis-exporter:9121]
-  - job_name: rabbitmq
+  - job_name: falkordb
     static_configs:
-      - targets: [rabbitmq:15692]
-  - job_name: neo4j
-    metrics_path: /metrics
-    static_configs:
-      - targets: [neo4j:2004]
+      - targets: [falkordb-exporter:9121]
   - job_name: qdrant
     metrics_path: /metrics
     static_configs:
       - targets: [qdrant:6333]
+
