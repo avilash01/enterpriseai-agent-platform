@@ -7,7 +7,7 @@ EnterpriseAI is a cloud-independent agent engineering project. The complete appl
 ### Requirements
 
 - Windows 10/11 with Docker Desktop installed and the Docker Engine running.
-- About 20 GB of free disk space for containers and local models; additional space helps for multimodal files.
+- At least 20 GB free on the drive that stores Docker's disk image for containers and local models; additional space helps for multimodal files. If your system drive is low on space, move the Docker disk image through **Docker Desktop → Settings → Resources → Advanced → Disk image location** before starting. Never move the VHDX file by hand.
 - 16 GB RAM recommended for the default 7B model. Smaller Ollama models can be selected in `.env` for less capable machines.
 - Internet access for the initial container and model downloads. Agent prompts and local document embeddings then run on the PC using Ollama.
 
@@ -18,9 +18,11 @@ EnterpriseAI is a cloud-independent agent engineering project. The complete appl
 3. Sign in at [http://localhost:8080](http://localhost:8080) using the `ADMIN_EMAIL` and `ADMIN_PASSWORD` printed by the launcher once (they are also saved in the local `.env`). Keep these values private.
 4. The health indicators update every 15 seconds. The first prompt may take a few minutes while Ollama loads the model.
 
-The startup launcher validates the Docker Engine and Compose configuration and reports actionable errors. You can also start the services manually with `docker compose up --build -d`, and download models with:
+The startup launcher validates the Docker Engine and Compose configuration, pulls runtime images one at a time, builds the API and web console, waits for the services to become healthy, then downloads models. You can also start the services manually with:
 
 ```powershell
+docker compose --parallel 1 pull
+docker compose --parallel 1 up --build --pull never --wait --wait-timeout 180 -d
 docker compose exec ollama ollama pull qwen2.5:7b
 docker compose exec ollama ollama pull nomic-embed-text
 docker compose exec ollama ollama pull llava:7b
@@ -57,6 +59,7 @@ If you need to show the running app to someone temporarily, start the local stac
 ## Troubleshooting
 
 - **Docker engine unavailable:** open Docker Desktop, wait until it reports that the engine is running, then run `Start-EnterpriseAI.cmd` again. If Docker reports access denied, restart Docker Desktop under the same Windows account that launches the project.
+- **Read-only Docker image store or failed layer write:** check free space on the host drive used by Docker's disk image. Move that image using **Settings → Resources → Advanced → Disk image location**, then restart Docker Desktop. Do not use **Clean up data** or **Reset to factory defaults** as a first step; those can remove local images and containers.
 - **A browser reports connection refused:** confirm the launcher completed and `docker compose ps` shows `web`, `api`, databases, Redis, and Ollama running. Open `http://localhost:8080` (not the GitHub Pages preview).
 - **Login fails:** use the local credentials from `.env`. If the database was already initialized with different credentials, update the password through the admin account or reset only after backing up your persistent data.
 - **Model is unavailable:** keep Ollama running and pull the configured model. To reduce local hardware needs, choose a smaller Ollama model and pull it; keep `EMBEDDING_MODEL` available for indexing and retrieval.
