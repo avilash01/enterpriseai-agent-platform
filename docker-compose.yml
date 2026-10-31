@@ -148,7 +148,7 @@ services:
     depends_on:
       redis: { condition: service_healthy }
   falkordb-exporter:
-    image: oliver006/redis_exporter:v1.69.1
+    image: oliver006/redis_exporter:v1.69.0
     restart: unless-stopped
     environment:
       REDIS_ADDR: redis://falkordb:6379
