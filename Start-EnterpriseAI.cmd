@@ -33,8 +33,12 @@ if errorlevel 1 (
   goto failed
 )
 
-echo Starting the API, web console, worker, databases, Ollama, and monitoring services...
-docker compose up --build -d
+echo Pulling runtime images one at a time...
+docker compose --parallel 1 pull
+if errorlevel 1 goto failed
+
+echo Building the API and web console, then starting the full stack...
+docker compose --parallel 1 up --build --pull never --wait --wait-timeout 180 -d
 if errorlevel 1 goto failed
 
 echo.
