@@ -58,7 +58,7 @@ AGENT_CATALOG = [
     AgentDefinition("report_writer", "Report Generation Agent", "Write the investigation report with evidence and caveats.", "request, plan, evidence, hypotheses, timeline, report_outline", "draft", "llm"),
     AgentDefinition("citation_auditor", "Citation Audit Agent", "Remove citations that do not map to retrieved documents.", "draft, citations", "citation_audit", "rule"),
     AgentDefinition("quality_reviewer", "Quality Review Agent", "Review answer completeness, clarity, grounding, and safety.", "request, draft, evidence, citation_audit", "reviewed_report", "llm"),
-    AgentDefinition("automation_planner", "Automation Planning Agent", "Prepare a proposal for human-approved external workflow actions.", "request, decision", "answer, automation_plan", "rule"),
+    AgentDefinition("automation_planner", "Decision and Automation Planning Agent", "Summarize evidence-supported next steps and prepare a proposal for human-approved workflow actions.", "request, reviewed_report, confidence, risk_assessment", "decision, answer, automation_plan", "rule"),
 ]
 
 AGENT_NAMES = [agent.id for agent in AGENT_CATALOG]
@@ -275,11 +275,6 @@ def build_workflow(retrieve, graph_expand=None, persist_entities=None):
 
     async def reviewer(s):
         return {"reviewed_report": await _ask(llm, "Quality Review Agent", "Correct unsupported specificity, retain uncertainty, do not add source claims, and produce the final response.", {"request": s["request"], "draft": s.get("draft", ""), "evidence": s.get("evidence", []), "citation_audit": s.get("citation_audit", {})})}
-
-    async def decision(s):
-        confidence = s.get("confidence", {}).get("level", "low")
-        risk = s.get("risk_assessment", "")
-        return {"decision": f"Evidence confidence: {confidence}. Human review is recommended before consequential action. Risk notes: {risk[:700]}"}
 
     async def automation(s):
         final = s.get("reviewed_report") or s.get("draft") or "No report was generated."
